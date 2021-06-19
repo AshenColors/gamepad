@@ -1,103 +1,125 @@
 // Jacek Fedorynski <jfedor@jfedor.org>
 // http://www.jfedor.org/
 
-#include "HID.h"
+#include <HID.h>
+#include <EEPROMWearLevel.h>
+
+// enable serial debugging
+// #define DEBUG true
 
 // I used an Arduino Pro Micro board, but it should work with any ATmega32U4-based board, just set the right pins below.
 // If you want L3/R3, the PS button or analog sticks, you'll need to add them.
 
-#define PIN_UP        2
-#define PIN_DOWN      3
-#define PIN_LEFT      4
-#define PIN_RIGHT     5
-#define PIN_CROSS     6
-#define PIN_CIRCLE    7
-#define PIN_TRIANGLE  8
-#define PIN_SQUARE    9
-#define PIN_L1        10
-#define PIN_L2        14
-#define PIN_R1        16
-#define PIN_R2        15
-#define PIN_SELECT    18
-#define PIN_START     19
+// these are daemonbite-compatible pins
+
+#define PIN_UP 18
+#define PIN_DOWN 19
+#define PIN_LEFT 20
+#define PIN_RIGHT 21
+#define PIN_CROSS 3
+#define PIN_CIRCLE 2
+#define PIN_TRIANGLE 1
+#define PIN_SQUARE 0
+#define PIN_L1 4
+#define PIN_L2 6
+#define PIN_L3 8
+#define PIN_R1 15
+#define PIN_R2 10
+#define PIN_R3 9
+#define PIN_SELECT 16
+#define PIN_START 14
+#define PIN_CONFIG 7
+
+//EEPROM settings
+#define EEPROM_LAYOUT_VERSION 3
+#define AMOUNT_OF_INDEXES 2
+#define X_IP_INDEX 0
+#define Y_IP_INDEX 1
+
+// 0 = neutral, 1 = LEFT/UP, 2 = RIGHT/DOWN
+uint8_t x_initial_input, y_initial_input = 0;
+// 0 = neutral, 1 = LEFT/UP priority, 2=RIGHT/DOWN priority, 3 = last input priority
+uint8_t x_input_priority = 0;
+uint8_t y_input_priority = 1;
 
 // HID report descriptor taken from a HORI Fighting Stick V3
 // works out of the box with PC and PS3
 // as dumped by usbhid-dump and parsed by https://eleccelerator.com/usbdescreqparser/
 static const uint8_t hidReportDescriptor[] PROGMEM = {
-  0x05, 0x01,        // Usage Page (Generic Desktop Ctrls)
-  0x09, 0x05,        // Usage (Game Pad)
-  0xA1, 0x01,        // Collection (Application)
-  0x85, 0x01,        // Report ID, not in the original descriptor, but the Arduino HID library can't seem to live without it
-  0x15, 0x00,        //   Logical Minimum (0)
-  0x25, 0x01,        //   Logical Maximum (1)
-  0x35, 0x00,        //   Physical Minimum (0)
-  0x45, 0x01,        //   Physical Maximum (1)
-  0x75, 0x01,        //   Report Size (1)
-  0x95, 0x0D,        //   Report Count (13)
-  0x05, 0x09,        //   Usage Page (Button)
-  0x19, 0x01,        //   Usage Minimum (0x01)
-  0x29, 0x0D,        //   Usage Maximum (0x0D)
-  0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0x95, 0x03,        //   Report Count (3)
-  0x81, 0x01,        //   Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0x05, 0x01,        //   Usage Page (Generic Desktop Ctrls)
-  0x25, 0x07,        //   Logical Maximum (7)
-  0x46, 0x3B, 0x01,  //   Physical Maximum (315)
-  0x75, 0x04,        //   Report Size (4)
-  0x95, 0x01,        //   Report Count (1)
-  0x65, 0x14,        //   Unit (System: English Rotation, Length: Centimeter)
-  0x09, 0x39,        //   Usage (Hat switch)
-  0x81, 0x42,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,Null State)
-  0x65, 0x00,        //   Unit (None)
-  0x95, 0x01,        //   Report Count (1)
-  0x81, 0x01,        //   Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-  0x46, 0xFF, 0x00,  //   Physical Maximum (255)
-  0x09, 0x30,        //   Usage (X)
-  0x09, 0x31,        //   Usage (Y)
-  0x09, 0x32,        //   Usage (Z)
-  0x09, 0x35,        //   Usage (Rz)
-  0x75, 0x08,        //   Report Size (8)
-  0x95, 0x04,        //   Report Count (4)
-  0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0x06, 0x00, 0xFF,  //   Usage Page (Vendor Defined 0xFF00)
-  0x09, 0x20,        //   Usage (0x20)
-  0x09, 0x21,        //   Usage (0x21)
-  0x09, 0x22,        //   Usage (0x22)
-  0x09, 0x23,        //   Usage (0x23)
-  0x09, 0x24,        //   Usage (0x24)
-  0x09, 0x25,        //   Usage (0x25)
-  0x09, 0x26,        //   Usage (0x26)
-  0x09, 0x27,        //   Usage (0x27)
-  0x09, 0x28,        //   Usage (0x28)
-  0x09, 0x29,        //   Usage (0x29)
-  0x09, 0x2A,        //   Usage (0x2A)
-  0x09, 0x2B,        //   Usage (0x2B)
-  0x95, 0x0C,        //   Report Count (12)
-  0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0x0A, 0x21, 0x26,  //   Usage (0x2621)
-  0x95, 0x08,        //   Report Count (8)
-  0xB1, 0x02,        //   Feature (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
-  0x0A, 0x21, 0x26,  //   Usage (0x2621)
-  0x91, 0x02,        //   Output (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
-  0x26, 0xFF, 0x03,  //   Logical Maximum (1023)
-  0x46, 0xFF, 0x03,  //   Physical Maximum (1023)
-  0x09, 0x2C,        //   Usage (0x2C)
-  0x09, 0x2D,        //   Usage (0x2D)
-  0x09, 0x2E,        //   Usage (0x2E)
-  0x09, 0x2F,        //   Usage (0x2F)
-  0x75, 0x10,        //   Report Size (16)
-  0x95, 0x04,        //   Report Count (4)
-  0x81, 0x02,        //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0xC0,              // End Collection
+    0x05, 0x01,       // Usage Page (Generic Desktop Ctrls)
+    0x09, 0x05,       // Usage (Game Pad)
+    0xA1, 0x01,       // Collection (Application)
+    0x85, 0x01,       // Report ID, not in the original descriptor, but the Arduino HID library can't seem to live without it
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x35, 0x00,       //   Physical Minimum (0)
+    0x45, 0x01,       //   Physical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x0D,       //   Report Count (13)
+    0x05, 0x09,       //   Usage Page (Button)
+    0x19, 0x01,       //   Usage Minimum (0x01)
+    0x29, 0x0D,       //   Usage Maximum (0x0D)
+    0x81, 0x02,       //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x95, 0x03,       //   Report Count (3)
+    0x81, 0x01,       //   Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x05, 0x01,       //   Usage Page (Generic Desktop Ctrls)
+    0x25, 0x07,       //   Logical Maximum (7)
+    0x46, 0x3B, 0x01, //   Physical Maximum (315)
+    0x75, 0x04,       //   Report Size (4)
+    0x95, 0x01,       //   Report Count (1)
+    0x65, 0x14,       //   Unit (System: English Rotation, Length: Centimeter)
+    0x09, 0x39,       //   Usage (Hat switch)
+    0x81, 0x42,       //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,Null State)
+    0x65, 0x00,       //   Unit (None)
+    0x95, 0x01,       //   Report Count (1)
+    0x81, 0x01,       //   Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x26, 0xFF, 0x00, //   Logical Maximum (255)
+    0x46, 0xFF, 0x00, //   Physical Maximum (255)
+    0x09, 0x30,       //   Usage (X)
+    0x09, 0x31,       //   Usage (Y)
+    0x09, 0x32,       //   Usage (Z)
+    0x09, 0x35,       //   Usage (Rz)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x04,       //   Report Count (4)
+    0x81, 0x02,       //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x06, 0x00, 0xFF, //   Usage Page (Vendor Defined 0xFF00)
+    0x09, 0x20,       //   Usage (0x20)
+    0x09, 0x21,       //   Usage (0x21)
+    0x09, 0x22,       //   Usage (0x22)
+    0x09, 0x23,       //   Usage (0x23)
+    0x09, 0x24,       //   Usage (0x24)
+    0x09, 0x25,       //   Usage (0x25)
+    0x09, 0x26,       //   Usage (0x26)
+    0x09, 0x27,       //   Usage (0x27)
+    0x09, 0x28,       //   Usage (0x28)
+    0x09, 0x29,       //   Usage (0x29)
+    0x09, 0x2A,       //   Usage (0x2A)
+    0x09, 0x2B,       //   Usage (0x2B)
+    0x95, 0x0C,       //   Report Count (12)
+    0x81, 0x02,       //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0x0A, 0x21, 0x26, //   Usage (0x2621)
+    0x95, 0x08,       //   Report Count (8)
+    0xB1, 0x02,       //   Feature (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
+    0x0A, 0x21, 0x26, //   Usage (0x2621)
+    0x91, 0x02,       //   Output (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
+    0x26, 0xFF, 0x03, //   Logical Maximum (1023)
+    0x46, 0xFF, 0x03, //   Physical Maximum (1023)
+    0x09, 0x2C,       //   Usage (0x2C)
+    0x09, 0x2D,       //   Usage (0x2D)
+    0x09, 0x2E,       //   Usage (0x2E)
+    0x09, 0x2F,       //   Usage (0x2F)
+    0x75, 0x10,       //   Report Size (16)
+    0x95, 0x04,       //   Report Count (4)
+    0x81, 0x02,       //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+    0xC0,             // End Collection
 };
 
-typedef struct {
+typedef struct
+{
   uint16_t buttons; // bits: 0 = square, 1 = cross, 2 = circle, 3 = triangle,
                     // 4 = L1, 5 = R1, 6 = L2, 7 = R2, 8 = select, 9 = start, 12 = PS
                     // 10 = L3?, 11 = R3?
-  uint8_t dpadHat; // 0 = up, 1 = up/right, 2 = right etc., 0x0f = neutral
+  uint8_t dpadHat;  // 0 = up, 1 = up/right, 2 = right etc., 0x0f = neutral
   uint8_t leftStickXAxis;
   uint8_t leftStickYAxis;
   uint8_t rightStickXAxis;
@@ -117,29 +139,137 @@ typedef struct {
   uint16_t accelerometerXAxis; // 10 bits (these are guesses BTW)
   uint16_t accelerometerYAxis; // 10 bits
   uint16_t accelerometerZAxis; // 10 bits
-  uint16_t gyroscopeAxis; // 10 bits
+  uint16_t gyroscopeAxis;      // 10 bits
 } hid_report_t;
 
 hid_report_t report;
 hid_report_t prevReport;
 
-void dpad(bool up, bool down, bool left, bool right) {
-  if (up && down) {
-    up = down = false;
-  }
-  if (left && right) {
-    left = right = false;
+void SOCD(bool *a, bool *b, uint8_t *input_priority, uint8_t *initial_input)
+{
+  // #ifdef DEBUG
+  //   Serial.print("Raw: ");
+  //   Serial.print(*a);
+  //   Serial.println(*b);
+  // #endif
+
+  if (*a && *b)
+  {
+    switch (*input_priority)
+    {
+    case 0:
+      *a = *b = false;
+      break;
+    case 1:
+      *a = true;
+      *b = false;
+      break;
+    case 2:
+      *a = false;
+      *b = true;
+      break;
+    case 3:
+      switch (*initial_input)
+      {
+      case 1:
+        *a = false;
+        *b = true;
+        break;
+      case 2:
+        *a = true;
+        *b = false;
+        break;
+      case 0:
+        *a = *b = false;
+        break;
+      }
+    }
+  } 
+  else 
+  {
+    if (*a && !*b)
+      *initial_input = 1;
+    if (*b && !*a)
+      *initial_input = 2;
   }
 
-  if (up && !right && !left) report.dpadHat = 0;
-  else if (up && right) report.dpadHat = 1;
-  else if (right && !up && !down) report.dpadHat = 2;
-  else if (right && down) report.dpadHat = 3;
-  else if (down && !right && !left) report.dpadHat = 4;
-  else if (down && left) report.dpadHat = 5;
-  else if (left && !down && !up) report.dpadHat = 6;
-  else if (left && up) report.dpadHat = 7;
-  else report.dpadHat = 0x0f;
+  // #ifdef DEBUG
+  //   Serial.print("Cleaned: ");
+  //   Serial.print(*a);
+  //   Serial.println(*b);
+  // #endif
+}
+
+void configIPmode()
+{
+  do
+  {
+    // the original functionality here was to bypass SOCD, which
+    // made more sense when config was slaved to a jumper
+    makeReport(digitalRead(PIN_UP) == LOW,
+               digitalRead(PIN_DOWN) == LOW,
+               digitalRead(PIN_LEFT) == LOW,
+               digitalRead(PIN_RIGHT) == LOW);
+  } while (!(digitalRead(PIN_START) == LOW &&
+             digitalRead(PIN_SELECT) == LOW &&
+             digitalRead(PIN_L3) == LOW &&
+             digitalRead(PIN_R3) == LOW) &&
+           !(digitalRead(PIN_CONFIG) == LOW));
+
+  // read inputs at time of release
+  bool up = digitalRead(PIN_UP) == LOW;
+  bool down = digitalRead(PIN_DOWN) == LOW;
+  bool left = digitalRead(PIN_LEFT) == LOW;
+  bool right = digitalRead(PIN_RIGHT) == LOW;
+
+  if (up && down)
+    y_input_priority = 3;
+  else if (up)
+    y_input_priority = 1;
+  else if (down)
+    y_input_priority = 2;
+  else if (!up && !down)
+    y_input_priority = 0;
+
+  if (left && right)
+    x_input_priority = 3;
+  else if (left)
+    x_input_priority = 1;
+  else if (right)
+    x_input_priority = 2;
+  else if (!up && !down)
+    x_input_priority = 0;
+
+  // #ifdef DEBUG
+  //   Serial.print("YIP: ");
+  //   Serial.print(y_input_priority);
+  //   Serial.print(", XIP: "); 
+  //   Serial.println(x_input_priority);
+  // #endif
+
+  writeconfig();
+}
+
+void dpad(bool up, bool down, bool left, bool right)
+{
+  if (up && !right && !left)
+    report.dpadHat = 0;
+  else if (up && right)
+    report.dpadHat = 1;
+  else if (right && !up && !down)
+    report.dpadHat = 2;
+  else if (right && down)
+    report.dpadHat = 3;
+  else if (down && !right && !left)
+    report.dpadHat = 4;
+  else if (down && left)
+    report.dpadHat = 5;
+  else if (left && !down && !up)
+    report.dpadHat = 6;
+  else if (left && up)
+    report.dpadHat = 7;
+  else
+    report.dpadHat = 0x0f;
 
   report.dpadRightAxis = right ? 0xff : 0x00;
   report.dpadLeftAxis = left ? 0xff : 0x00;
@@ -147,14 +277,100 @@ void dpad(bool up, bool down, bool left, bool right) {
   report.dpadDownAxis = down ? 0xff : 0x00;
 }
 
-void sendReport() {
-  if (memcmp(&prevReport, &report, sizeof(report))) {
+void sendReport()
+{
+  if (memcmp(&prevReport, &report, sizeof(report)))
+  {
     HID().SendReport(1, &report, sizeof(report));
     memcpy(&prevReport, &report, sizeof(report));
   }
 }
 
-void setup() {
+// These arguments are really messy, but they're needed in order
+// to both respect and be able to bypass SOCD cleaning later
+void makeReport(bool up, bool down, bool left, bool right)
+{
+  report.buttons = 0x00;
+  report.triangleAxis = 0x00;
+  report.circleAxis = 0x00;
+  report.crossAxis = 0x00;
+  report.squareAxis = 0x00;
+  report.L1Axis = 0x00;
+  report.L2Axis = 0x00;
+  report.R1Axis = 0x00;
+  report.R2Axis = 0x00;
+
+  dpad(up, down, left, right);
+
+  if (digitalRead(PIN_SQUARE) == LOW)
+  {
+    report.buttons |= 1 << 0;
+    report.squareAxis = 0xff;
+  }
+  if (digitalRead(PIN_CROSS) == LOW)
+  {
+    report.buttons |= 1 << 1;
+    report.crossAxis = 0xff;
+  }
+  if (digitalRead(PIN_CIRCLE) == LOW)
+  {
+    report.buttons |= 1 << 2;
+    report.circleAxis = 0xff;
+  }
+  if (digitalRead(PIN_TRIANGLE) == LOW)
+  {
+    report.buttons |= 1 << 3;
+    report.triangleAxis = 0xff;
+  }
+  if (digitalRead(PIN_L1) == LOW)
+  {
+    report.buttons |= 1 << 4;
+    report.L1Axis = 0xff;
+  }
+  if (digitalRead(PIN_R1) == LOW)
+  {
+    report.buttons |= 1 << 5;
+    report.R1Axis = 0xff;
+  }
+  if (digitalRead(PIN_L2) == LOW)
+  {
+    report.buttons |= 1 << 6;
+    report.L2Axis = 0xff;
+  }
+  if (digitalRead(PIN_R2) == LOW)
+  {
+    report.buttons |= 1 << 7;
+    report.R2Axis = 0xff;
+  }
+  if (digitalRead(PIN_L3) == LOW)
+  {
+    report.buttons |= 1 << 10;
+    report.L2Axis = 0xff;
+  }
+  if (digitalRead(PIN_R3) == LOW)
+  {
+    report.buttons |= 1 << 11;
+    report.R2Axis = 0xff;
+  }
+  if (digitalRead(PIN_SELECT) == LOW)
+  {
+    report.buttons |= 1 << 8;
+  }
+  if (digitalRead(PIN_START) == LOW)
+  {
+    report.buttons |= 1 << 9;
+  }
+
+  sendReport();
+}
+
+void setup()
+{
+  #ifdef DEBUG
+    Serial.begin(9600);
+    Serial.println("Debugging output enabled");
+  #endif
+
   static HIDSubDescriptor node(hidReportDescriptor, sizeof(hidReportDescriptor));
   HID().AppendDescriptor(&node);
 
@@ -168,10 +384,13 @@ void setup() {
   pinMode(PIN_SQUARE, INPUT_PULLUP);
   pinMode(PIN_L1, INPUT_PULLUP);
   pinMode(PIN_L2, INPUT_PULLUP);
+  pinMode(PIN_L3, INPUT_PULLUP);
   pinMode(PIN_R1, INPUT_PULLUP);
   pinMode(PIN_R2, INPUT_PULLUP);
+  pinMode(PIN_R3, INPUT_PULLUP);
   pinMode(PIN_SELECT, INPUT_PULLUP);
   pinMode(PIN_START, INPUT_PULLUP);
+  pinMode(PIN_CONFIG, INPUT_PULLUP);
 
   memset(&report, 0, sizeof(report));
   report.dpadHat = 0x0f;
@@ -184,62 +403,71 @@ void setup() {
   report.rightStickXAxis = 0x80;
   report.rightStickYAxis = 0x80;
   memcpy(&prevReport, &report, sizeof(report));
+
+  // get our input priority from eeprom, overwriting defaults if they're there
+  EEPROMwl.begin(EEPROM_LAYOUT_VERSION, AMOUNT_OF_INDEXES);
+  readconfig();
 }
 
-void loop() {
-  report.buttons = 0x00;
-  report.triangleAxis = 0x00;
-  report.circleAxis = 0x00;
-  report.crossAxis = 0x00;
-  report.squareAxis = 0x00;
-  report.L1Axis = 0x00;
-  report.L2Axis = 0x00;
-  report.R1Axis = 0x00;
-  report.R2Axis = 0x00;
+void loop()
+{
+  // read input early to apply SOCD to it
+  bool up = (digitalRead(PIN_UP) == LOW);
+  bool down = (digitalRead(PIN_DOWN) == LOW);
+  bool left = (digitalRead(PIN_LEFT) == LOW);
+  bool right = (digitalRead(PIN_RIGHT) == LOW);
 
-  dpad(digitalRead(PIN_UP) == LOW,
-       digitalRead(PIN_DOWN) == LOW,
-       digitalRead(PIN_LEFT) == LOW,
-       digitalRead(PIN_RIGHT) == LOW);
+  // #ifdef DEBUG
+  //   Serial.print("Main loop reads: ");
+  //   Serial.print(up);
+  //   Serial.print(down);
+  //   Serial.print(left);
+  //   Serial.println(right);
+  // #endif
 
-  if (digitalRead(PIN_SQUARE) == LOW) {
-    report.buttons |= 1 << 0;
-    report.squareAxis = 0xff;
+  // SOCD config = START + SELECT + L3 + R3. gotta be all of them
+  // since (at least on my box) it's impossible to hit accidentally
+  if ((digitalRead(PIN_START) == LOW &&
+       digitalRead(PIN_SELECT) == LOW &&
+       digitalRead(PIN_L3) == LOW &&
+       digitalRead(PIN_R3) == LOW) ||
+      (digitalRead(PIN_CONFIG) == LOW))
+  {
+    // break out of normal loop and initiate SOCD config,
+    // this will tie up the loop on purpose
+    configIPmode();
   }
-  if (digitalRead(PIN_CROSS) == LOW) {
-    report.buttons |= 1 << 1;
-    report.crossAxis = 0xff;
-  }
-  if (digitalRead(PIN_CIRCLE) == LOW) {
-    report.buttons |= 1 << 2;
-    report.circleAxis = 0xff;
-  }
-  if (digitalRead(PIN_TRIANGLE) == LOW) {
-    report.buttons |= 1 << 3;
-    report.triangleAxis = 0xff;
-  }
-  if (digitalRead(PIN_L1) == LOW) {
-    report.buttons |= 1 << 4;
-    report.L1Axis = 0xff;
-  }
-  if (digitalRead(PIN_R1) == LOW) {
-    report.buttons |= 1 << 5;
-    report.R1Axis = 0xff;
-  }
-  if (digitalRead(PIN_L2) == LOW) {
-    report.buttons |= 1 << 6;
-    report.L2Axis = 0xff;
-  }
-  if (digitalRead(PIN_R2) == LOW) {
-    report.buttons |= 1 << 7;
-    report.R2Axis = 0xff;
-  }
-  if (digitalRead(PIN_SELECT) == LOW) {
-    report.buttons |= 1 << 8;
-  }
-  if (digitalRead(PIN_START) == LOW) {
-    report.buttons |= 1 << 9;
+  else
+  {
+    SOCD(&up, &down, &y_input_priority, &y_initial_input);
+    SOCD(&left, &right, &x_input_priority, &x_initial_input);
   }
 
-  sendReport();
+  makeReport(up, down, left, right);
+}
+
+// EEPROM code handling
+
+void readconfig()
+{
+  EEPROMwl.get(Y_IP_INDEX, y_input_priority);
+  EEPROMwl.get(X_IP_INDEX, x_input_priority);
+  #ifdef DEBUG
+    Serial.print("Read in y: ");
+    Serial.print(y_input_priority);
+    Serial.print(", x: ");
+    Serial.println(x_input_priority);
+  #endif
+}
+
+void writeconfig()
+{
+  EEPROMwl.put(Y_IP_INDEX, y_input_priority);
+  EEPROMwl.put(X_IP_INDEX, x_input_priority);
+  #ifdef DEBUG
+    Serial.print("Write out y: ");
+    Serial.print(y_input_priority);
+    Serial.print(", x: ");
+    Serial.println(x_input_priority);
+  #endif
 }
