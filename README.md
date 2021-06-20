@@ -1,3 +1,15 @@
+devnotes todo
+
+as it is, this doesn't work with MS Gundam Extreme Vs Maxiboost ON for PS4 as a PS3 legacy controller. KADE does, and the descriptor is easily accessed in its source code here. https://github.com/bootsector/PS3PadMicro/blob/master/Descriptors.c
+
+other reports indicate that Gundam EXVS MBON is picky about the controllers it accepts as legacy compared to street fighter/some other titles, so it's probably an HID descriptor/identification thing? I don't know enough yet about this part of the program to successfully mod it in and see how it works, but it's on the to-do list, along with 'clean up my code and make it suitable for a pull request'.
+
+while programmed in i actually haven't tested the config button on pin 7 since i've been using the combination. this is also a thing that i should do at some point
+
+this branch should be usblag tested against the main branch to see how much input delay this handling adds, but in casual testing with me, a fighting game scrub, it's unnoticable
+
+---
+
 This branch adds configurable SOCD cleaning that is stored in EEPROM.
 The default is the usual hitbox L+R=N, U+D=U.
 
